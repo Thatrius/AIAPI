@@ -1,5 +1,4 @@
---VARIABLES DESCRIPTIONS:
---brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}, sensitive_weights={}, last_modified_weight={node_index, weight_index}}
+--VARIABLE DESCRIPTIONS:
 --long_term_memory: memory={index=int, inputs={index}, outputs={index}, error=float, connected_memories={index}}
 --short_term_memory: (position in long term memory paired with the value at that location)x20 Ex: 10, 4, nil, 0.7 (the error remembered from the 10th memory in the list)
 --network: node={index=int, input_nodes={index}, output_nodes={index}, output=float, weights={float}, biases={float} inputs_recieved=int}
@@ -11,19 +10,20 @@ local layers = {5,10,11,12,10,3}--amount of input nodes, amount of nodes in each
 
 --GENERATE A NEURAL NETWORK:
 function generate(layers)
-    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}}
+    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}, last_modified_weight={node_index=nil, weight_index=nil}}
     local last_layer = {}
     local current_layer = {}
     for layer_index, node_amount in ipairs(layers) do 
         for i=1,node_amount do
             node_index = #brain.network+1
-            node = {index=node_index, input_nodes={}, output_nodes={}, output=0, weights={}, bias=math.random(0,100)/100, inputs_recieved=0}
+            node = {index=node_index, input_nodes={}, output_nodes={}, output=0, weights={}, weight_sensitivities={}, bias=math.random(0,100)/100, bias_sensitivity=1, inputs_recieved=0}
             if layer_index > 1 then
                 for j,node_index2 in ipairs(last_layer) do
                     node2 = brain.network[node_index2]
                     node2.output_nodes[#node2.output_nodes+1] = node_index
                     node.input_nodes[#node.input_nodes+1] = node_index2
                     node.weights[#node.weights+1] = math.random(0,100)/100
+                    node.weight_sensitivities[#node.weights+1] = 0
                     brain.network[node_index2] = node2
                 end
             end
@@ -82,39 +82,50 @@ function think(brain)
 end
 
 --MAKE A NEURAL NETWORK LEARN FROM MISTAKES (reinforcement learning)
-function learn(brain, last_error, current_error)
+function learn(brain, last_error, current_error) --needs to modify biases as well
     local network = brain.network
+    local smallnum = 0.001
     if last_error then
         local modified_node_index, modified_weight_index = brain.last_modified_weight
-        local weight_last_modified = network[modified_node_index][modified_weight_index]
-        local partial_derivative = (current_error-last_error)/0.001
-        network[modified_node_index][modified_weight_index] = (weight_last_modified-0.001) - (partial_derivative*1)
-        --add weight to sensitive_weights
+        local weight_last_modified = network[modified_node_index].weights[modified_weight_index]
+        --find slope with respect to weight:
+        local partial_derivative = (current_error-last_error)/smallnum
+        --reset weight and push toward slope:
+        network[modified_node_index].weights[modified_weight_index] = (weight_last_modified-smallnum) - (partial_derivative*1)
+        --assign sensitivity value to weight:
+        network[modified_node_index].weight_sensitivities[modified_weight_index] = partial_derivative
     end
 
-    --select random weight:
-    local modified_node_index = math.random(#network)
-    local modified_weight_index = math.random(#network[modified_node_index].weights)
-    --chance to re-select random weight (better-scoring weights are more likely to be selected):
-    if math.random(2)==1 and last_error then
-        local rand = 0
-        for i, weight in ipairs(brain.sensitive_weights) do
-            rand = rand + weight[2]
+    --select random weight to modify (more sensitive weights are more likely to be selected):
+    local node_index
+    local weight_index
+    local rand = 0
+    for i, node in ipairs(network) do
+        for j, weight in ipairs(node.weights) do
+            rand = rand + node.weight_sensitivities[j]
         end
-        rand = math.random(rand)
-
-        local index = 0
-        for i, weight in ipairs(brain.sensitive_weights) do
-            index = index + weight[2]
-            if index >= rand then rand = weight; break end
-        end
-        modified_node_index = rand[1].node_index
-        modified_weight_index = rand[1].weight_index
     end
+    rand = math.random(math.floor(rand*100000))/100000
+
+    local index = 0
+    local weight_selected = false
+    for i, node in ipairs(network) do
+        for j, weight in ipairs(node.weights) do
+            index = index + node.weight_sensitivities[j]
+            if index >= rand then
+                node_index = i
+                weight_index = j
+                weight_selected = true
+                break 
+            end
+        end
+        if weight_selected then break end
+    end
+
     --modify selected weight:
-    local modified_weight = network[modified_node_index][modified_weight_index]
-    brain.network[modified_node_index][modified_weight_index] = modified_weight + 0.001
-    brain.last_modified_weight = {modified_node_index, modified_weight_index}
+    local weight = network[node_index].weights[weight_index]
+    brain.network[node_index].weights[weight_index] = weight + 0.001
+    brain.last_modified_weight = {node_index, weight_index}
     return brain
     --idea: run every frame, but rewind a frame every time you change a weight, so its training for the best possible output for a single frame
     --that would require an error for each frame though

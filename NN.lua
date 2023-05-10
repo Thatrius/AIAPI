@@ -10,13 +10,13 @@ local layers = {5,10,11,12,10,3}--amount of input nodes, amount of nodes in each
 
 --GENERATE A NEURAL NETWORK:
 function generate(layers)
-    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}, last_modified_weight={node_index=nil, weight_index=nil}}
+    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}, last_modified_weight={node_index=nil, weight_index=nil, previous_val=nil}, last_modified_bias={node_index=nil, previous_val=nil}}
     local last_layer = {}
     local current_layer = {}
     for layer_index, node_amount in ipairs(layers) do 
         for i=1,node_amount do
             node_index = #brain.network+1
-            node = {index=node_index, input_nodes={}, output_nodes={}, output=0, weights={}, weight_sensitivities={}, bias=math.random(0,100)/100, bias_sensitivity=1, inputs_recieved=0}
+            node = {index=node_index, input_nodes={}, output_nodes={}, output=0, weights={}, weight_sensitivities={}, bias=math.random(0,100)/100, bias_sensitivity=0, inputs_recieved=0}
             if layer_index > 1 then
                 for j,node_index2 in ipairs(last_layer) do
                     node2 = brain.network[node_index2]
@@ -82,33 +82,41 @@ function think(brain)
 end
 
 --MAKE A NEURAL NETWORK LEARN FROM MISTAKES (reinforcement learning)
-function learn(brain, last_error, current_error) --needs to modify biases as well
+function learn(brain, last_error, current_error)
     local network = brain.network
     local smallnum = 0.001
-    if last_error then
-        local modified_node_index, modified_weight_index = brain.last_modified_weight
+    if network.last_modified_weight.node_index then
+        local modified_node_index, modified_weight_index, previous_val = brain.last_modified_weight
         local weight_last_modified = network[modified_node_index].weights[modified_weight_index]
-        --find slope with respect to weight:
-        local partial_derivative = (current_error-last_error)/smallnum
-        --reset weight and push toward slope:
-        network[modified_node_index].weights[modified_weight_index] = (weight_last_modified-smallnum) - (partial_derivative*1)
-        --assign sensitivity value to weight:
-        network[modified_node_index].weight_sensitivities[modified_weight_index] = partial_derivative
+        local partial_derivative = (current_error-last_error)/smallnum--find slope with respect to weight
+        brain.network[modified_node_index].weights[modified_weight_index] = previous_val - (partial_derivative*1)--reset weight and push toward slope
+        brain.network[modified_node_index].weight_sensitivities[modified_weight_index] = math.abs(partial_derivative)--assign sensitivity value to weight
+        brain.last_modified_weight = {node_index=nil, weight_index=nil, previous_val=nil}
+    elseif network.last_modified_bias.node_index then
+        local modified_node_index, previous_val = brain.last_modified_bias
+        local bias_last_modified = network[modified_bias_index].bias
+        local partial_derivative = (current_error-last_error)/smallnum--find slope with respect to bias
+        brain.network[modified_node_index].bias = previous_val - (partial_derivative*1)--reset weight and push toward slope
+        brain.network[modified_node_index].bias_sensitivity = math.abs(partial_derivative)--assign sensitivity value to bias
+        brain.last_modified_bias = {node_index=nil, previous_val=nil}
     end
 
-    --select random weight to modify (more sensitive weights are more likely to be selected):
+    --select random weight/bias to modify (more sensitive weights/biases are more likely to be selected):
     local node_index
     local weight_index
+    local bias_index
     local rand = 0
     for i, node in ipairs(network) do
         for j, weight in ipairs(node.weights) do
             rand = rand + node.weight_sensitivities[j]
         end
+        rand = rand + node.bias_sensitivity
     end
     rand = math.random(math.floor(rand*100000))/100000
 
+    local weight_selected
+    local bias_selected
     local index = 0
-    local weight_selected = false
     for i, node in ipairs(network) do
         for j, weight in ipairs(node.weights) do
             index = index + node.weight_sensitivities[j]
@@ -116,16 +124,28 @@ function learn(brain, last_error, current_error) --needs to modify biases as wel
                 node_index = i
                 weight_index = j
                 weight_selected = true
-                break 
+                break
             end
         end
-        if weight_selected then break end
+        index = index + node.bias_sensitivity
+        if index >= rand then
+            node_index = i
+            bias_selected = true
+            break
+        end
+        if weight_selected or bias_selected then break end
     end
 
-    --modify selected weight:
-    local weight = network[node_index].weights[weight_index]
-    brain.network[node_index].weights[weight_index] = weight + 0.001
-    brain.last_modified_weight = {node_index, weight_index}
+    --modify selected weight/bias:
+    if weight_selected then
+        local weight = network[node_index].weights[weight_index]
+        brain.network[node_index].weights[weight_index] = weight + smallnum
+        brain.last_modified_weight = {node_index, weight_index, weight}
+    else
+        local bias = network[node_index].bias
+        brain.network[node_index].bias = bias + smallnum
+        brain.last_modified_bias = {node_index, bias}
+    end
     return brain
     --idea: run every frame, but rewind a frame every time you change a weight, so its training for the best possible output for a single frame
     --that would require an error for each frame though
@@ -145,36 +165,50 @@ function train(brain, data, iterations)
         end
         return loss
     end
-    for map=1,#data do
-        local queue = queue_end
-        local step_size = 1
-        local smallnum = 0.0001
-        for i, node_index in ipairs(queue) do
-            local node = network[node_index]
-            local new_weights = {}
-            for j, weight in ipairs(node.weights) do
-                local network_copy = network
-                local weight_copy = weight
+    for i=1,iterations do
+        for j, map in ipairs(data) do
+            local queue = queue_end
+            local step_size = 1
+            local smallnum = 0.0001
+            for k, node_index in ipairs(queue) do
+                local node = network[node_index]
+                local new_weights = {}
+                for weight_index, weight in ipairs(node.weights) do
+                    local brain_copy = brain
+                    local weight_copy = weight
+
+                    local loss1 = loss(brain, map)
+                    brain_copy.network.weights[weight_index] = weight_copy + smallnum
+                    local loss2 = loss(brain_copy, map)
+
+                    local partial_derivative = (loss2-loss1)/smallnum
+                    new_weights[weight_index] = weight - (partial_derivative*step_size)
+                end
+                local brain_copy = brain
+                local bias_copy = node.bias
 
                 local loss1 = loss(brain, map)
-                brain_copy.network.weights[j] = weight_copy + smallnum
+                brain_copy.network.bias = bias_copy + smallnum
                 local loss2 = loss(brain_copy, map)
 
                 local partial_derivative = (loss2-loss1)/smallnum
-                new_weights[j] = weight - (partial_derivative*step_size)
-            end
-            node.weights = new_weights
-            network[node_index] = node
+                local new_bias = node.bias - (partial_derivative*step_size)
 
-            --add the next node to the queue:
-            if node.input_nodes ~= {} then
-                for j, input_node_index in ipairs(node.input_nodes) do
-                    local input_node = network[input_node_index]
-                    table.insert(queue, input_node.index)
+                --apply changes:
+                node.weights = new_weights
+                node.bias = new_bias
+                brain.network[node_index] = node
+
+                --add the next node to the queue:
+                if node.input_nodes ~= {} then
+                    for l, input_node_index in ipairs(node.input_nodes) do
+                        local input_node = network[input_node_index]
+                        table.insert(queue, input_node.index)
+                    end
                 end
+                queue[k] = nil
             end
-            queue[i] = nil
         end
-        return network
     end
+    return brain
 end

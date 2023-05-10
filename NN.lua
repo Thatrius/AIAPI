@@ -44,19 +44,21 @@ function generate(layers)
 end
 
 --RUN A NEURAL NETWORK:
-function think(brain)
+function think(brain, inputs)
     local network = brain.network
     local queue = brain.queue_start
     local outputs = {}
+    local input_index = 1
     for i, node_index in ipairs(queue) do
         local node = network[node_index]
         if node.inputs_recieved == #node.input_nodes then
             --apply bias:
             node.output = node.output + bias
             --add up all the inputs, applying their weights:
-            for j, input_node_index in ipairs(node.input_nodes) do --when/how determine inputs?
+            for j, input_node_index in ipairs(node.input_nodes) do
                 local input_node = network[input_node_index]
                 local input = input_node.output
+                if #input_node.input_nodes == 0 then input = inputs[input_index]; input_index=input_index+1 end --inject inputs into first layer
                 local weight = node.weights[input_node]
                 local bias = node.biases[input_node]
                 node.output = node.output+(input*weight)
@@ -156,9 +158,9 @@ function train(brain, data, iterations)
     local network = brain.network
     local queue_start = brain.queue_start
     local queue_end = brain.queue_end
-    function loss(network, map)
+    function loss(brain, map)
         --compare output values to desired output values from map:
-        local network2, outputs = think(brain)
+        local network2, outputs = think(brain, map.inputs)
         local loss = 0
         for i,output in ipairs(outputs) do
             loss = loss + (map.outputs[i]-output)^2
@@ -171,6 +173,7 @@ function train(brain, data, iterations)
             local step_size = 1
             local smallnum = 0.0001
             for k, node_index in ipairs(queue) do
+                --optimize weights:
                 local node = network[node_index]
                 local new_weights = {}
                 for weight_index, weight in ipairs(node.weights) do
@@ -184,6 +187,7 @@ function train(brain, data, iterations)
                     local partial_derivative = (loss2-loss1)/smallnum
                     new_weights[weight_index] = weight - (partial_derivative*step_size)
                 end
+                --optimize bias:
                 local brain_copy = brain
                 local bias_copy = node.bias
 

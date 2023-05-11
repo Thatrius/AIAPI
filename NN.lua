@@ -10,7 +10,7 @@ local layers = {5,10,11,12,10,3}--amount of input nodes, amount of nodes in each
 
 --GENERATE A NEURAL NETWORK:
 function generate(layers)
-    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, input_nodes={}, last_modified_weight={node_index=nil, weight_index=nil, previous_val=nil}, last_modified_bias={node_index=nil, previous_val=nil}}
+    local brain = {network={}, short_term_memory={}, long_term_memory={}, queue_start={}, queue_end={}, last_modified_weight={node_index=nil, weight_index=nil, previous_val=nil}, last_modified_bias={node_index=nil, previous_val=nil}}
     local last_layer = {}
     local current_layer = {}
     for layer_index, node_amount in ipairs(layers) do 
@@ -28,8 +28,6 @@ function generate(layers)
                 end
             end
             if layer_index == 1 then
-                brain.input_nodes[#brain.input_nodes+1] = node_index
-            elseif layer_index == 2 then 
                 brain.queue_start[#brain.queue_start+1] = node_index
             elseif layer_index == #layers then 
                 brain.queue_end[#brain.queue_end+1] = node_index
@@ -48,37 +46,55 @@ function think(brain, inputs)
     local network = brain.network
     local queue = brain.queue_start
     local outputs = {}
-    local input_index = 1
-    for i, node_index in ipairs(queue) do
+    local i = 1
+    while #queue > 0 do
+        node_index = queue[1]
+        --print("CURRENT NODE: "..node_index)
         local node = network[node_index]
         if node.inputs_recieved == #node.input_nodes then
-            --apply bias:
-            node.output = node.output + bias
-            --add up all the inputs, applying their weights:
-            for j, input_node_index in ipairs(node.input_nodes) do
-                local input_node = network[input_node_index]
-                local input = input_node.output
-                if #input_node.input_nodes == 0 then input = inputs[input_index]; input_index=input_index+1 end --inject inputs into first layer
-                local weight = node.weights[input_node]
-                local bias = node.biases[input_node]
-                node.output = node.output+(input*weight)
+            if #node.input_nodes > 0 then
+                --apply bias:
+                node.output = node.output + node.bias
+                --add up all the inputs, applying their weights:
+                for j, input_node_index in ipairs(node.input_nodes) do
+                    local input_node = network[input_node_index]
+                    local input = input_node.output
+                    local weight = node.weights[j]
+                    node.output = node.output+(input*weight)
+                end
+                node.output = math.tanh(node.output)
+                network[node_index] = node
+            else
+                node.output = math.tanh(inputs[i]) --inject inputs into first layer
             end
-            node.output = math.tanh(node.output)
-            network[node_index] = node
+            --print("OUTPUT: "..node.output)
 
             --add the next node to the queue:
-            if node.output_nodes ~= {} then
+            if #node.output_nodes > 0 then
                 for j, output_node_index in ipairs(node.output_nodes) do
                     local output_node = network[output_node_index]
                     output_node.inputs_recieved = output_node.inputs_recieved + 1
                     network[output_node_index] = output_node
-                    table.insert(queue, output_node.index)
+                    --check if output node is already queued:
+                    local already_done = false
+                    for k=1,#queue do
+                        local other_node_index = queue[k]
+                        if other_node_index ~= nil then
+                            --print(output_node_index.." : "..other_node_index)
+                            if output_node_index == other_node_index then already_done = true break end
+                        end
+                    end
+                    if not already_done then table.insert(queue, output_node_index) end
                 end
+                --print("OUTPUT NODES: "..dump(node.output_nodes))
             else
+                --print("final output")
                 outputs[#outputs+1] = node.output
             end
         end
-        queue[i] = nil
+        --print("QUEUE: "..dump(queue))
+        table.remove(queue, 1)--queue[i] = nil
+        i = i + 1
     end
     return network, outputs
 end
@@ -154,7 +170,7 @@ function learn(brain, last_error, current_error)
 end
 
 --TRAIN A NEURAL NETWORK (backprop)
-function train(brain, data, iterations)
+function train(brain, data, iterations) --needs to be fixed
     local network = brain.network
     local queue_start = brain.queue_start
     local queue_end = brain.queue_end
@@ -181,7 +197,7 @@ function train(brain, data, iterations)
                     local weight_copy = weight
 
                     local loss1 = loss(brain, map)
-                    brain_copy.network.weights[weight_index] = weight_copy + smallnum
+                    brain_copy.network[node_index].weights[weight_index] = weight_copy + smallnum
                     local loss2 = loss(brain_copy, map)
 
                     local partial_derivative = (loss2-loss1)/smallnum
@@ -192,7 +208,7 @@ function train(brain, data, iterations)
                 local bias_copy = node.bias
 
                 local loss1 = loss(brain, map)
-                brain_copy.network.bias = bias_copy + smallnum
+                brain_copy.network[node_index].bias = bias_copy + smallnum
                 local loss2 = loss(brain_copy, map)
 
                 local partial_derivative = (loss2-loss1)/smallnum

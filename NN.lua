@@ -194,13 +194,12 @@ function learn(brain, last_error, current_error)
     --idea: run every frame, but rewind a frame every time you change a weight, so its training for the best possible output for a single frame
     --that would require an error for each frame though
     --idea 2: randomize outputs slightly, if it improves then use backprop to reflect map of inputs to said randomized outputs
+    --that sounds like randomizing weights with extra steps you absolute buffoon
 end
 
 --TRAIN A NEURAL NETWORK (backprop)
-function train(brain, data, iterations) --needs to be fixed
+function train(brain, data, iterations)
     local network = brain.network
-    local queue_start = brain.queue_start
-    local queue_end = brain.queue_end
     function loss(brain, map)
         --compare output values to desired output values from map:
         local network2, outputs = think(brain, map.inputs)
@@ -212,39 +211,38 @@ function train(brain, data, iterations) --needs to be fixed
     end
     for i=1,iterations do
         for j, map in pairs(data) do
-            local queue = queue_end
-            local step_size = 1
+            local queue = copy_table(brain.queue_end)
+            local step_size = 0.1
             local smallnum = 0.0001
             for k, node_index in pairs(queue) do
                 --optimize weights:
                 local node = network[node_index]
                 local new_weights = {}
                 for weight_index, weight in pairs(node.weights) do
-                    local brain_copy = brain
+                    local brain_copy = copy_table(brain)
                     local weight_copy = weight
 
                     local loss1 = loss(brain, map)
                     brain_copy.network[node_index].weights[weight_index] = weight_copy + smallnum
                     local loss2 = loss(brain_copy, map)
 
-                    local partial_derivative = (loss2-loss1)/smallnum
-                    new_weights[weight_index] = weight - (partial_derivative*step_size)
+                    local gradient = (loss2-loss1)/smallnum
+                    new_weights[weight_index] = weight - (gradient*step_size)
                 end
                 --optimize bias:
-                local brain_copy = brain
+                local brain_copy = copy_table(brain)
                 local bias_copy = node.bias
 
                 local loss1 = loss(brain, map)
                 brain_copy.network[node_index].bias = bias_copy + smallnum
                 local loss2 = loss(brain_copy, map)
 
-                local partial_derivative = (loss2-loss1)/smallnum
-                local new_bias = node.bias - (partial_derivative*step_size)
+                local gradient = (loss2-loss1)/smallnum
+                local new_bias = node.bias - (gradient*step_size)
 
                 --apply changes:
                 node.weights = new_weights
                 node.bias = new_bias
-                brain.network[node_index] = node
 
                 --add the next node to the queue:
                 if node.input_nodes ~= {} then
@@ -257,5 +255,4 @@ function train(brain, data, iterations) --needs to be fixed
             end
         end
     end
-    return brain
 end
